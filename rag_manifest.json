@@ -1,0 +1,22 @@
+{
+    "ec2.pdf": {
+        "sha256": "71559ecd487fcf6fdc1e5f4aa34aa4d31b3996dc277325bbde10d52e72a95395",
+        "size": 39280689,
+        "modified_time": 1786471985.885863
+    },
+    "rds.pdf": {
+        "sha256": "e9d35ce4d200d4a7626a7fe86fbfb7678947f9e408861a123b9344be6c6d634d",
+        "size": 71077992,
+        "modified_time": 1786472077.944846
+    },
+    "s3.pdf": {
+        "sha256": "b725ac14e70487a6335db1b0a34edde5557224d41180db8d5de1584998b35fbf",
+        "size": 31016040,
+        "modified_time": 1786472016.6047173
+    },
+    "vpc.pdf": {
+        "sha256": "36494c189f219a02d6bc8736229c346a3a186dc2c6d8eb664bd3b2c57c5023cf",
+        "size": 6771142,
+        "modified_time": 1788017231.9069688
+    }
+}
