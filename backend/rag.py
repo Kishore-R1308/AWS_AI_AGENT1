@@ -28,7 +28,7 @@ from config import (
 # ============================================================
 # CONFIGURATION
 # ============================================================
-COLLECTION_NAME = QDRANT_COLLECTION_NAME
+COLLECTION_NAME = "aws_documents"
 
 # all-MiniLM-L6-v2 embedding dimension
 VECTOR_SIZE = 384
