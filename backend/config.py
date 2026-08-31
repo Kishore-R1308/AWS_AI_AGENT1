@@ -38,6 +38,16 @@ QDRANT_URL = os.getenv("QDRANT_URL")
 
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 
+QDRANT_COLLECTION_NAME = os.getenv(
+    "QDRANT_COLLECTION_NAME",
+    "aws_documents",
+)
+
+EMBEDDING_MODEL_NAME = os.getenv(
+    "EMBEDDING_MODEL_NAME",
+    "sentence-transformers/all-MiniLM-L6-v2",
+)
+
 
 # =========================
 # AWS Configuration
