@@ -4,6 +4,8 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from rag import retrieve_context
+
 from agent import run_agent
 from aws_auth import AWS_SESSIONS, connect_aws
 from database import Base, engine, get_db
@@ -29,6 +31,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/rag-test")
+def rag_test(q: str):
+    context = retrieve_context(q)
+
+    return {
+        "query": q,
+        "context": context
+    }
 
 
 @app.get("/")
