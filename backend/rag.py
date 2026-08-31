@@ -843,14 +843,87 @@ def retrieve_documents(
     if not query:
         return []
 
-    vectorstore = get_vectorstore()
+    client = get_qdrant_client()
 
-    return vectorstore.max_marginal_relevance_search(
-        query,
-        k=k,
-        fetch_k=FETCH_K,
-        lambda_mult=0.65,
+    ensure_collection()
+
+    # --------------------------------------------------------
+    # CREATE QUERY EMBEDDING
+    # --------------------------------------------------------
+
+    query_vector = get_embeddings().embed_query(
+        query
     )
+
+    # --------------------------------------------------------
+    # SEARCH QDRANT DIRECTLY
+    # --------------------------------------------------------
+
+    result = client.query_points(
+        collection_name=COLLECTION_NAME,
+        query=query_vector,
+        limit=k,
+        with_payload=True,
+        with_vectors=False,
+    )
+
+    documents = []
+
+    for point in result.points:
+
+        payload = point.payload or {}
+
+        text = payload.get(
+            "text",
+            "",
+        )
+
+        if not text:
+            continue
+
+        metadata = {
+            "source": payload.get(
+                "source",
+                "Unknown source",
+            ),
+
+            "document_name": payload.get(
+                "document_name",
+                "Unknown document",
+            ),
+
+            "page": payload.get(
+                "page",
+                "Unknown page",
+            ),
+
+            "content_type": payload.get(
+                "content_type",
+                "text",
+            ),
+        }
+
+        # Preserve additional metadata
+        for key, value in payload.items():
+
+            if key not in {
+                "text",
+                "source",
+                "document_name",
+                "page",
+                "content_type",
+            }:
+
+                metadata[key] = value
+
+        documents.append(
+            Document(
+                page_content=text,
+                metadata=metadata,
+            )
+        )
+
+    return documents
 
 
 # ============================================================
@@ -905,11 +978,7 @@ def retrieve_context(
             f"{document.page_content}"
         )
 
-    return "\n\n---\n\n".join(
-        parts
-    )
-
-
+    return "\n\n---\n\n".join(parts)
 # ============================================================
 # RETRIEVED SOURCES
 # ============================================================
