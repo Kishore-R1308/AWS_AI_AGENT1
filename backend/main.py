@@ -77,6 +77,32 @@ def aws_connect(request: AWSConnectRequest):
         )
 
 
+@app.get("/qdrant-raw-test")
+def qdrant_raw_test():
+    from rag import get_qdrant_client, COLLECTION_NAME
+
+    client = get_qdrant_client()
+
+    points, _ = client.scroll(
+        collection_name=COLLECTION_NAME,
+        limit=2,
+        with_payload=True,
+        with_vectors=False,
+    )
+
+    result = []
+
+    for point in points:
+        result.append({
+            "id": str(point.id),
+            "payload": point.payload,
+        })
+
+    return {
+        "collection": COLLECTION_NAME,
+        "points": result,
+    }
+
 @app.post(
     "/chat",
     response_model=ChatResponse,
