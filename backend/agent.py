@@ -1,5 +1,6 @@
 import json
 from typing import TypedDict
+
 from langchain_groq import ChatGroq
 from langgraph.graph import START, END, StateGraph
 
@@ -16,7 +17,7 @@ from backend.aws_tools import (
     get_cost_by_service,
     get_cost_summary,
     get_patch_status,
-    get_lambda_functions
+    get_lambda_functions,
 )
 from backend.schemas import Plan
 from backend.config import GROQ_API_KEY, GROQ_MODEL
@@ -40,8 +41,7 @@ TOOL_MAP = {
     "get_cost_summary": get_cost_summary,
     "get_cost_by_service": get_cost_by_service,
     "get_patch_status": get_patch_status,
-    "get_lambda_functions": get_lambda_functions
-    
+    "get_lambda_functions": get_lambda_functions,
 }
 
 
@@ -52,6 +52,7 @@ TOOL_MAP = {
 class AgentState(TypedDict, total=False):
     session_id: str
     query: str
+    conversation_history: str
     intent: str
     tools: list[str]
     context: str
@@ -67,7 +68,7 @@ class AgentState(TypedDict, total=False):
 llm = ChatGroq(
     model=GROQ_MODEL,
     temperature=0,
-    api_key=GROQ_API_KEY
+    api_key=GROQ_API_KEY,
 )
 
 planner_llm = llm.with_structured_output(Plan)
@@ -80,6 +81,27 @@ planner_llm = llm.with_structured_output(Plan)
 def planner_node(state):
     prompt = f"""
 You are an AWS AI planner.
+
+Use the previous conversation to understand the user's
+current question.
+
+Previous Conversation:
+{state.get("conversation_history", "No previous conversation.")}
+
+If the current question contains words such as:
+- it
+- this
+- that
+- they
+- those
+- them
+- how many
+- what about it
+- what about them
+- show me those
+
+use the previous conversation to determine what the user
+is referring to.
 
 Your responsibilities:
 
@@ -124,12 +146,14 @@ Existing resources
 
 Rules:
 
-Detect ALL services mentioned or implied.
-A question may require multiple tools.
-Never omit a required tool.
-Use get_s3_storage_summary only when storage usage,
+- Detect ALL services mentioned or implied.
+- A question may require multiple tools.
+- Never omit a required tool.
+- Use get_s3_storage_summary only when storage usage,
   bucket sizing, or storage comparison is required.
-Return JSON only.
+- For follow-up questions, use the previous conversation
+  to resolve the user's reference.
+- Return JSON only.
 
 Examples:
 
@@ -189,28 +213,41 @@ Response:
     ]
 }}
 
-User Query:
+Previous Conversation:
+{state.get("conversation_history", "")}
+
+Current User Query:
 {state["query"]}
+
 Return only the structured output.
 """
+
     try:
-        response=llm.invoke(prompt)
-        content=response.content
-        result=json.loads(content)
-        intent=result.get("intent", "KNOWLEDGE").upper()
-        tools=result.get("tools", [])
-        valid_tools=[tool for tool in tools if tool in TOOL_MAP]
+        response = llm.invoke(prompt)
+
+        content = response.content
+        result = json.loads(content)
+
+        intent = result.get("intent", "KNOWLEDGE").upper()
+        tools = result.get("tools", [])
+
+        valid_tools = [
+            tool for tool in tools
+            if tool in TOOL_MAP
+        ]
+
         return {
             "intent": intent,
-            "tools": valid_tools
+            "tools": valid_tools,
         }
+
     except Exception as e:
         print("Planner Error:", str(e))
+
         return {
-        "intent": "KNOWLEDGE",
-        "tools": []
-    }
-    
+            "intent": "KNOWLEDGE",
+            "tools": [],
+        }
 
 
 # =====================================================
@@ -219,7 +256,10 @@ Return only the structured output.
 
 def knowledge_node(state):
     context = retrieve_context(state["query"])
-    return {"context": context}
+
+    return {
+        "context": context
+    }
 
 
 # =====================================================
@@ -231,20 +271,32 @@ def monitoring_node(state):
     tools = state.get("tools", [])
 
     print("\nSelected Tools:", tools)
+
     results = {}
 
     for tool_name in tools:
         try:
             print(f"Executing {tool_name}")
-            tool_function = TOOL_MAP[tool_name]
-            results[tool_name] = tool_function(session_id)
-        except Exception as e:
-            print(f"Error executing {tool_name}: {str(e)}")
-            results[tool_name] = {"error": str(e)}
 
+            tool_function = TOOL_MAP[tool_name]
+
+            results[tool_name] = tool_function(session_id)
+
+        except Exception as e:
+            print(
+                f"Error executing {tool_name}: {str(e)}"
+            )
+
+            results[tool_name] = {
+                "error": str(e)
+            }
 
     return {
-        "tool_result": json.dumps(results, indent=2, default=str)
+        "tool_result": json.dumps(
+            results,
+            indent=2,
+            default=str
+        )
     }
 
 
@@ -253,30 +305,37 @@ def monitoring_node(state):
 # =====================================================
 
 def final_answer_node(state):
+    history = state.get("conversation_history", "")
+
     if state["intent"] == "KNOWLEDGE":
         prompt = f"""
 You are an AWS technical assistant.
-Answer only using the applied AWS knowledge.
-Do not hallucinate.
-Do not invent AWS details.
 
-Question:
+Previous Conversation:
+{history}
+
+Current Question:
 {state["query"]}
 
 Knowledge Base:
 {state.get("context", "")}
 
 Rules:
-- Answer only from the supplied knowledge.
+- Use the previous conversation when needed to understand the current question.
+- Answer using the supplied AWS knowledge.
 - Do not invent information.
-- Provide a practical explanation.
+- If the question refers to something from the previous conversation, use that context.
+- Give a clear and practical answer.
 """
-    else:
 
+    else:
         prompt = f"""
 You are an AWS monitoring assistant.
 
-User Question:
+Previous Conversation:
+{history}
+
+Current Question:
 {state["query"]}
 
 Tools Executed:
@@ -286,37 +345,32 @@ AWS Results:
 {state.get("tool_result")}
 
 Rules:
-1. Use only AWS Results.
-2. Never invent resources.
-3. Never invent counts.
-4. Never invent names.
-5. If multiple services were returned, summarize each service.
-6. Provide totals whenever possible.
-7. If no resources exist, explicitly state that.
-8. If errors are present, summarize them clearly.
-9. Create a consolidated report.
-10. Format the answer as a clean report:
-        -Use heading for each service
-        -Show counts and tables
-        -List details in bullet points
-        -End with total summary
-        -Use tables for listing resources and its details
+1. Use previous conversation to understand references such as "it", "this", "that", "they", etc.
+2. Use only the current AWS Results for live AWS information.
+3. Never invent resources, counts, or names.
+4. If multiple services were returned, summarize each service.
+5. Provide totals whenever possible.
+6. If no resources exist, explicitly state that.
+7. If errors are present, summarize them clearly.
+8. Use headings, tables, and bullet points where useful.
+9. Give a concise and clear answer.
 
-
-Generate the final answer in a clear and concise manner.
+Generate the final answer.
 """
 
     response = llm.invoke(prompt)
-    return {"answer": response.content}
 
+    return {"answer": response.content}
 
 # =====================================================
 # ROUTER
 # =====================================================
 
 def route_after_planner(state):
+
     if state["intent"] == "KNOWLEDGE":
         return "knowledge"
+
     return "monitoring"
 
 
@@ -332,12 +386,19 @@ builder.add_node("monitoring", monitoring_node)
 builder.add_node("final", final_answer_node)
 
 builder.add_edge(START, "planner")
-builder.add_conditional_edges("planner", route_after_planner, {
-    "knowledge": "knowledge",
-    "monitoring": "monitoring",
-})
+
+builder.add_conditional_edges(
+    "planner",
+    route_after_planner,
+    {
+        "knowledge": "knowledge",
+        "monitoring": "monitoring",
+    },
+)
+
 builder.add_edge("knowledge", "final")
 builder.add_edge("monitoring", "final")
+
 builder.add_edge("final", END)
 
 graph = builder.compile()
@@ -347,11 +408,18 @@ graph = builder.compile()
 # RUN AGENT
 # =====================================================
 
-def run_agent(session_id, query):
-    result = graph.invoke({
-        "session_id": session_id,
-        "query": query,
-    })
+def run_agent(
+    session_id,
+    query,
+    conversation_history="",
+):
+    result = graph.invoke(
+        {
+            "session_id": session_id,
+            "query": query,
+            "conversation_history": conversation_history,
+        }
+    )
 
     return {
         "answer": result["answer"],

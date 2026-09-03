@@ -142,7 +142,6 @@ def _get_conversation(
 
 
 def _make_title(message: str) -> str:
-    # Simple deterministic title: no extra LLM call.
     title = " ".join(message.strip().split())
 
     if not title:
@@ -276,10 +275,29 @@ def chat(
     )
 
     try:
+        # Get previous messages from this conversation
+        previous_messages = (
+            db.query(ConversationMessage)
+            .filter(
+                ConversationMessage.conversation_id == conversation.id
+            )
+            .order_by(ConversationMessage.created_at.asc())
+            .all()
+        )
+
+        # Convert previous messages into text
+        conversation_history = "\n".join(
+            f"{message.role}: {message.content}"
+            for message in previous_messages
+        )
+
+        # Send conversation history to the agent
         result = run_agent(
             session_id=request.session_id,
             query=request.message,
+            conversation_history=conversation_history,
         )
+
     except Exception as exc:
         raise HTTPException(
             status_code=500,

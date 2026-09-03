@@ -3,11 +3,19 @@ import requests
 import streamlit as st
 
 
+# ============================================================
+# BACKEND URL
+# ============================================================
+
 BACKEND_URL = os.getenv(
     "BACKEND_URL",
     "http://127.0.0.1:8000",
 )
 
+
+# ============================================================
+# PAGE CONFIG
+# ============================================================
 
 st.set_page_config(
     page_title="AWS AI Agent",
@@ -16,25 +24,22 @@ st.set_page_config(
 )
 
 
-# -------------------------------------------------------------------
+# ============================================================
 # CSS
-# -------------------------------------------------------------------
+# ============================================================
 
 st.markdown(
     """
     <style>
 
-    /* Sidebar width */
     section[data-testid="stSidebar"] {
         width: 360px !important;
     }
 
-    /* Sidebar content */
     section[data-testid="stSidebar"] > div {
         padding-top: 1rem;
     }
 
-    /* Chat history buttons */
     section[data-testid="stSidebar"] .stButton > button {
         border: none;
         background: transparent;
@@ -48,28 +53,6 @@ st.markdown(
         background-color: #e8e8e8;
     }
 
-    /* New Chat button */
-    section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {
-        border-radius: 8px;
-    }
-
-    /* Delete buttons - second column */
-    section[data-testid="stSidebar"]
-    div[data-testid="column"]:has(button[aria-label*="Delete"]) button {
-        color: #dc3545 !important;
-        border: 1px solid #d5d5d5 !important;
-        background-color: transparent !important;
-        text-align: center !important;
-    }
-
-    section[data-testid="stSidebar"]
-    div[data-testid="column"]:has(button[aria-label*="Delete"]) button:hover {
-        color: #b02a37 !important;
-        background-color: #fff0f0 !important;
-        border-color: #dc3545 !important;
-    }
-
-    /* Chat input */
     div[data-testid="stChatInput"] {
         margin-bottom: 15px;
     }
@@ -80,9 +63,9 @@ st.markdown(
 )
 
 
-# -------------------------------------------------------------------
-# Session state
-# -------------------------------------------------------------------
+# ============================================================
+# SESSION STATE
+# ============================================================
 
 defaults = {
     "aws_session_id": None,
@@ -98,9 +81,9 @@ for key, value in defaults.items():
         st.session_state[key] = value
 
 
-# -------------------------------------------------------------------
-# API helpers
-# -------------------------------------------------------------------
+# ============================================================
+# API HELPERS
+# ============================================================
 
 def api_get(path, timeout=10):
     return requests.get(
@@ -117,34 +100,12 @@ def api_post(path, payload=None, timeout=30):
     )
 
 
-# -------------------------------------------------------------------
-# Conversation functions
-# -------------------------------------------------------------------
-
-def create_conversation():
-    if not st.session_state.account_id:
-        return None
-
-    response = api_post(
-        "/conversations",
-        {"account_id": st.session_state.account_id},
-    )
-
-    if response.status_code != 200:
-        st.error("Could not create a new chat.")
-        return None
-
-    data = response.json()
-
-    st.session_state.conversation_id = data["id"]
-    st.session_state.messages = []
-
-    load_conversations()
-
-    return data["id"]
-
+# ============================================================
+# CONVERSATIONS
+# ============================================================
 
 def load_conversations():
+
     if not st.session_state.account_id:
         st.session_state.conversations = []
         return
@@ -163,13 +124,53 @@ def load_conversations():
         st.session_state.conversations = []
 
 
-def load_conversation(conversation_id):
+def create_conversation():
+
+    if not st.session_state.account_id:
+        return None
+
     try:
+
+        response = api_post(
+            "/conversations",
+            {
+                "account_id": st.session_state.account_id
+            },
+        )
+
+        if response.status_code != 200:
+
+            st.error("Could not create a new chat.")
+            return None
+
+        data = response.json()
+
+        st.session_state.conversation_id = data["id"]
+        st.session_state.messages = []
+
+        load_conversations()
+
+        return data["id"]
+
+    except Exception as exc:
+
+        st.error(
+            f"Could not create conversation: {exc}"
+        )
+
+        return None
+
+
+def load_conversation(conversation_id):
+
+    try:
+
         response = api_get(
             f"/conversations/{conversation_id}/messages"
         )
 
         if response.status_code != 200:
+
             st.error("Could not load this conversation.")
             return
 
@@ -177,66 +178,91 @@ def load_conversation(conversation_id):
         st.session_state.messages = response.json()
 
     except Exception as exc:
-        st.error(f"Could not load conversation: {exc}")
+
+        st.error(
+            f"Could not load conversation: {exc}"
+        )
 
 
 def delete_conversation(conversation_id):
+
     try:
+
         response = requests.delete(
             f"{BACKEND_URL}/conversations/{conversation_id}",
             timeout=10,
         )
 
         if response.status_code != 200:
+
             st.error("Could not delete the conversation.")
             return
 
-        if st.session_state.conversation_id == conversation_id:
+        if (
+            st.session_state.conversation_id
+            == conversation_id
+        ):
+
             st.session_state.conversation_id = None
             st.session_state.messages = []
 
             create_conversation()
 
         load_conversations()
+
         st.rerun()
 
     except Exception as exc:
-        st.error(f"Could not delete conversation: {exc}")
+
+        st.error(
+            f"Could not delete conversation: {exc}"
+        )
 
 
-# -------------------------------------------------------------------
-# Message rendering
-# -------------------------------------------------------------------
+# ============================================================
+# MESSAGE RENDERING
+# ============================================================
 
 def render_message(message):
+
     role = message.get("role")
 
     if role not in ("user", "assistant"):
         return
 
     with st.chat_message(role):
-        st.write(message.get("content", ""))
+
+        st.write(
+            message.get("content", "")
+        )
 
         if role == "assistant":
+
             intent = message.get("intent")
 
             if intent:
-                metadata = [f"Intent: {intent}"]
+
+                metadata = [
+                    f"Intent: {intent}"
+                ]
 
                 if (
                     intent == "MONITORING"
                     and message.get("service")
                 ):
+
                     metadata.append(
                         f"Service: {message['service']}"
                     )
 
-                st.caption(" | ".join(metadata))
+                st.caption(
+                    " | ".join(metadata)
+                )
 
 
-# -------------------------------------------------------------------
-# Sidebar
-# -------------------------------------------------------------------
+# ============================================================
+# SIDEBAR
+# ============================================================
 
 with st.sidebar:
 
@@ -278,7 +304,11 @@ with st.sidebar:
 
     if connect_button:
 
-        if not access_key or not secret_key or not role_arn:
+        if (
+            not access_key
+            or not secret_key
+            or not role_arn
+        ):
 
             st.error(
                 "Access key, secret key and role ARN are required."
@@ -286,7 +316,9 @@ with st.sidebar:
 
         else:
 
-            with st.spinner("Authenticating with AWS..."):
+            with st.spinner(
+                "Authenticating with AWS..."
+            ):
 
                 try:
 
@@ -339,11 +371,14 @@ with st.sidebar:
                     else:
 
                         try:
+
                             detail = response.json().get(
                                 "detail",
                                 "AWS connection failed.",
                             )
+
                         except Exception:
+
                             detail = response.text
 
                         st.error(detail)
@@ -368,9 +403,9 @@ with st.sidebar:
                     )
 
 
-    # ----------------------------------------------------------------
-    # Connected state
-    # ----------------------------------------------------------------
+    # ========================================================
+    # CONNECTED STATE
+    # ========================================================
 
     if st.session_state.aws_connected:
 
@@ -382,14 +417,13 @@ with st.sidebar:
 
         st.divider()
 
-        # Chat History
         st.subheader("💬 Chat History")
 
-        # New Chat
         if st.button(
             "＋ New Chat",
             use_container_width=True,
         ):
+
             create_conversation()
             st.rerun()
 
@@ -397,7 +431,6 @@ with st.sidebar:
 
         load_conversations()
 
-        # Chat list
         for conversation in st.session_state.conversations:
 
             conversation_id = conversation["id"]
@@ -417,7 +450,6 @@ with st.sidebar:
                 gap="small",
             )
 
-            # Chat button
             with col1:
 
                 label = (
@@ -438,7 +470,6 @@ with st.sidebar:
 
                     st.rerun()
 
-            # Delete button
             with col2:
 
                 if st.button(
@@ -457,9 +488,9 @@ with st.sidebar:
         st.warning("🔴 AWS Not Connected")
 
 
-# -------------------------------------------------------------------
-# Main Chat
-# -------------------------------------------------------------------
+# ============================================================
+# MAIN CHAT
+# ============================================================
 
 if not st.session_state.aws_connected:
 
@@ -473,19 +504,27 @@ if not st.session_state.aws_connected:
     st.stop()
 
 
+# ============================================================
+# ENSURE CONVERSATION
+# ============================================================
+
 if not st.session_state.conversation_id:
 
     create_conversation()
 
 
-# Display messages
+# ============================================================
+# DISPLAY HISTORY
+# ============================================================
 
 for message in st.session_state.messages:
 
     render_message(message)
 
 
-# Chat input
+# ============================================================
+# CHAT INPUT
+# ============================================================
 
 prompt = st.chat_input(
     "Ask about AWS..."
@@ -495,21 +534,28 @@ prompt = st.chat_input(
 if prompt:
 
     if not st.session_state.conversation_id:
+
         create_conversation()
 
 
+    # --------------------------------------------------------
     # User message
+    # --------------------------------------------------------
 
     with st.chat_message("user"):
 
         st.write(prompt)
 
 
+    # --------------------------------------------------------
     # Assistant response
+    # --------------------------------------------------------
 
     with st.chat_message("assistant"):
 
-        with st.spinner("Agent is thinking..."):
+        with st.spinner(
+            "Agent is thinking..."
+        ):
 
             try:
 
@@ -528,7 +574,6 @@ if prompt:
                     timeout=120,
                 )
 
-
                 if response.status_code != 200:
 
                     try:
@@ -543,60 +588,50 @@ if prompt:
                         detail = response.text
 
                     st.error(detail)
-                    st.stop()
 
+                else:
 
-                data = response.json()
+                    data = response.json()
 
-
-                # Assistant answer
-
-                st.write(
-                    data["answer"]
-                )
-
-
-                # Metadata
-
-                caption = (
-                    f"Intent: {data['intent']}"
-                )
-
-
-                if (
-                    data["intent"] == "MONITORING"
-                    and data.get("service")
-                ):
-
-                    caption += (
-                        f" | Service: "
-                        f"{data['service']}"
+                    st.write(
+                        data["answer"]
                     )
 
+                    caption = (
+                        f"Intent: {data['intent']}"
+                    )
 
-                st.caption(caption)
+                    if (
+                        data["intent"]
+                        == "MONITORING"
+                        and data.get("service")
+                    ):
 
+                        caption += (
+                            f" | Service: "
+                            f"{data['service']}"
+                        )
 
-                # Update local state
+                    st.caption(caption)
 
-                st.session_state.messages.extend(
-                    [
-                        {
-                            "role": "user",
-                            "content": prompt,
-                        },
-                        {
-                            "role": "assistant",
-                            "content": data["answer"],
-                            "intent": data["intent"],
-                            "service": data.get("service"),
-                        },
-                    ]
-                )
+                    # Update local state
 
+                    st.session_state.messages.extend(
+                        [
+                            {
+                                "role": "user",
+                                "content": prompt,
+                            },
+                            {
+                                "role": "assistant",
+                                "content": data["answer"],
+                                "intent": data["intent"],
+                                "service": data.get("service"),
+                            },
+                        ]
+                    )
 
-                load_conversations()
-
+                    load_conversations()
 
             except requests.exceptions.ConnectionError:
 
@@ -605,13 +640,11 @@ if prompt:
                     "Make sure Uvicorn is running on port 8000."
                 )
 
-
             except requests.exceptions.Timeout:
 
                 st.error(
                     "The chat request timed out."
                 )
-
 
             except Exception as exc:
 
