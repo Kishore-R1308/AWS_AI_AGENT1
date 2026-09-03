@@ -3,7 +3,7 @@ from typing import TypedDict
 from langchain_groq import ChatGroq
 from langgraph.graph import START, END, StateGraph
 
-from aws_tools import (
+from backend.aws_tools import (
     get_ec2_instances,
     get_rds_instances,
     get_s3_buckets,
@@ -18,9 +18,9 @@ from aws_tools import (
     get_patch_status,
     get_lambda_functions
 )
-from schemas import Plan
-from config import GROQ_API_KEY, GROQ_MODEL
-from rag import retrieve_context
+from backend.schemas import Plan
+from backend.config import GROQ_API_KEY, GROQ_MODEL
+from backend.rag import retrieve_context
 
 
 # =====================================================

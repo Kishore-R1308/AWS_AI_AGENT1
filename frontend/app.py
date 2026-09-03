@@ -1,6 +1,4 @@
 import os
-import uuid
-
 import requests
 import streamlit as st
 
@@ -10,69 +8,241 @@ BACKEND_URL = os.getenv(
     "http://127.0.0.1:8000",
 )
 
+
 st.set_page_config(
     page_title="AWS AI Agent",
     page_icon="☁️",
     layout="wide",
 )
 
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
 
-if "aws_connected" not in st.session_state:
-    st.session_state.aws_connected = False
+# -------------------------------------------------------------------
+# CSS
+# -------------------------------------------------------------------
 
-if "account_id" not in st.session_state:
-    st.session_state.account_id = None
+st.markdown(
+    """
+    <style>
 
-if "messages" not in st.session_state:
+    /* Sidebar width */
+    section[data-testid="stSidebar"] {
+        width: 360px !important;
+    }
+
+    /* Sidebar content */
+    section[data-testid="stSidebar"] > div {
+        padding-top: 1rem;
+    }
+
+    /* Chat history buttons */
+    section[data-testid="stSidebar"] .stButton > button {
+        border: none;
+        background: transparent;
+        text-align: left;
+        border-radius: 8px;
+        padding: 7px 10px;
+        min-height: 38px;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button:hover {
+        background-color: #e8e8e8;
+    }
+
+    /* New Chat button */
+    section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {
+        border-radius: 8px;
+    }
+
+    /* Delete buttons - second column */
+    section[data-testid="stSidebar"]
+    div[data-testid="column"]:has(button[aria-label*="Delete"]) button {
+        color: #dc3545 !important;
+        border: 1px solid #d5d5d5 !important;
+        background-color: transparent !important;
+        text-align: center !important;
+    }
+
+    section[data-testid="stSidebar"]
+    div[data-testid="column"]:has(button[aria-label*="Delete"]) button:hover {
+        color: #b02a37 !important;
+        background-color: #fff0f0 !important;
+        border-color: #dc3545 !important;
+    }
+
+    /* Chat input */
+    div[data-testid="stChatInput"] {
+        margin-bottom: 15px;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# -------------------------------------------------------------------
+# Session state
+# -------------------------------------------------------------------
+
+defaults = {
+    "aws_session_id": None,
+    "aws_connected": False,
+    "account_id": None,
+    "conversation_id": None,
+    "messages": [],
+    "conversations": [],
+}
+
+for key, value in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
+
+
+# -------------------------------------------------------------------
+# API helpers
+# -------------------------------------------------------------------
+
+def api_get(path, timeout=10):
+    return requests.get(
+        f"{BACKEND_URL}{path}",
+        timeout=timeout,
+    )
+
+
+def api_post(path, payload=None, timeout=30):
+    return requests.post(
+        f"{BACKEND_URL}{path}",
+        json=payload or {},
+        timeout=timeout,
+    )
+
+
+# -------------------------------------------------------------------
+# Conversation functions
+# -------------------------------------------------------------------
+
+def create_conversation():
+    if not st.session_state.account_id:
+        return None
+
+    response = api_post(
+        "/conversations",
+        {"account_id": st.session_state.account_id},
+    )
+
+    if response.status_code != 200:
+        st.error("Could not create a new chat.")
+        return None
+
+    data = response.json()
+
+    st.session_state.conversation_id = data["id"]
     st.session_state.messages = []
 
+    load_conversations()
 
-def load_history():
+    return data["id"]
+
+
+def load_conversations():
+    if not st.session_state.account_id:
+        st.session_state.conversations = []
+        return
+
     try:
-        response = requests.get(
-            f"{BACKEND_URL}/history/"
-            f"{st.session_state.account_id}",
-            timeout=10,
+        response = api_get(
+            f"/conversations/{st.session_state.account_id}"
         )
 
         if response.status_code == 200:
-            return response.json()
+            st.session_state.conversations = response.json()
+        else:
+            st.session_state.conversations = []
 
     except Exception:
-        pass
+        st.session_state.conversations = []
 
-    return []
 
-def load_history_for_account(account_id):
+def load_conversation(conversation_id):
     try:
-        response=requests.get(f"{BACKEND_URL}/history/{account_id}",
-        timeout=10)
+        response = api_get(
+            f"/conversations/{conversation_id}/messages"
+        )
 
-        if response.status_code==200:
-            history=response.json()
-            st.session_state.messages=[]
-            for item in history:
-                st.session_state.messages.append({
-                    "user":item["user_message"],
-                    "assistant":item["assistant_message"],
-                    "intent":item["intent"],
-                    "service":item["service"]
-                })
+        if response.status_code != 200:
+            st.error("Could not load this conversation.")
+            return
 
-            return True
+        st.session_state.conversation_id = conversation_id
+        st.session_state.messages = response.json()
+
     except Exception as exc:
-        st.error(f"Could not load chat history: {exec}")
-    return False
-
-st.title("☁️ AWS AI Agent")
+        st.error(f"Could not load conversation: {exc}")
 
 
+def delete_conversation(conversation_id):
+    try:
+        response = requests.delete(
+            f"{BACKEND_URL}/conversations/{conversation_id}",
+            timeout=10,
+        )
 
+        if response.status_code != 200:
+            st.error("Could not delete the conversation.")
+            return
+
+        if st.session_state.conversation_id == conversation_id:
+            st.session_state.conversation_id = None
+            st.session_state.messages = []
+
+            create_conversation()
+
+        load_conversations()
+        st.rerun()
+
+    except Exception as exc:
+        st.error(f"Could not delete conversation: {exc}")
+
+
+# -------------------------------------------------------------------
+# Message rendering
+# -------------------------------------------------------------------
+
+def render_message(message):
+    role = message.get("role")
+
+    if role not in ("user", "assistant"):
+        return
+
+    with st.chat_message(role):
+        st.write(message.get("content", ""))
+
+        if role == "assistant":
+            intent = message.get("intent")
+
+            if intent:
+                metadata = [f"Intent: {intent}"]
+
+                if (
+                    intent == "MONITORING"
+                    and message.get("service")
+                ):
+                    metadata.append(
+                        f"Service: {message['service']}"
+                    )
+
+                st.caption(" | ".join(metadata))
+
+
+# -------------------------------------------------------------------
+# Sidebar
+# -------------------------------------------------------------------
 
 with st.sidebar:
-    st.header("AWS Connection")
+
+    st.header("☁️ AWS AI Agent")
+
+    st.subheader("AWS Connection")
 
     st.write(
         "Connect using a cross-account IAM role."
@@ -107,24 +277,22 @@ with st.sidebar:
     )
 
     if connect_button:
-        if (
-            not access_key
-            or not secret_key
-            or not role_arn
-        ):
+
+        if not access_key or not secret_key or not role_arn:
+
             st.error(
-                "Access key, secret key and role ARN "
-                "are required."
+                "Access key, secret key and role ARN are required."
             )
 
         else:
-            with st.spinner(
-                "Authenticating with AWS..."
-            ):
+
+            with st.spinner("Authenticating with AWS..."):
+
                 try:
-                    response = requests.post(
-                        f"{BACKEND_URL}/aws/connect",
-                        json={
+
+                    response = api_post(
+                        "/aws/connect",
+                        {
                             "access_key": access_key,
                             "secret_key": secret_key,
                             "region": region,
@@ -134,25 +302,33 @@ with st.sidebar:
                     )
 
                     if response.status_code == 200:
+
                         data = response.json()
 
-                        st.session_state.session_id = (
+                        st.session_state.aws_session_id = (
                             data["session_id"]
                         )
 
-                        st.session_state.aws_connected = (
-                            True
-                        )
+                        st.session_state.aws_connected = True
 
                         st.session_state.account_id = (
                             data["account_id"]
                         )
 
+                        st.session_state.conversation_id = None
                         st.session_state.messages = []
 
-                        load_history_for_account(
-                            st.session_state.account_id
-                        )
+                        load_conversations()
+
+                        if st.session_state.conversations:
+
+                            load_conversation(
+                                st.session_state.conversations[0]["id"]
+                            )
+
+                        else:
+
+                            create_conversation()
 
                         st.success(
                             "AWS Connected Successfully"
@@ -161,6 +337,7 @@ with st.sidebar:
                         st.rerun()
 
                     else:
+
                         try:
                             detail = response.json().get(
                                 "detail",
@@ -172,64 +349,143 @@ with st.sidebar:
                         st.error(detail)
 
                 except requests.exceptions.ConnectionError:
+
                     st.error(
                         "Cannot connect to the FastAPI backend. "
                         "Make sure Uvicorn is running on port 8000."
                     )
 
                 except requests.exceptions.Timeout:
+
                     st.error(
                         "The backend request timed out."
                     )
 
                 except Exception as exc:
+
                     st.error(
                         f"Backend error: {exc}"
                     )
 
+
+    # ----------------------------------------------------------------
+    # Connected state
+    # ----------------------------------------------------------------
+
     if st.session_state.aws_connected:
+
         st.success("🟢 AWS Connected")
 
         st.write(
-            f"Account: "
-            f"`{st.session_state.account_id}`"
+            f"Account: `{st.session_state.account_id}`"
         )
 
-    else:
-        st.warning(
-            "🔴 AWS Not Connected"
-        )
+        st.divider()
 
-    st.divider()
+        # Chat History
+        st.subheader("💬 Chat History")
 
-
-
-st.subheader("💬 Chat")
-
-
-for message in st.session_state.messages:
-    with st.chat_message("user"):
-        st.write(message["user"])
-
-    with st.chat_message("assistant"):
-        st.write(message["assistant"])
-
-        metadata = [
-            f"Intent: {message['intent']}"
-        ]
-
-        if (
-            message["intent"] == "MONITORING"
-            and message.get("service")
+        # New Chat
+        if st.button(
+            "＋ New Chat",
+            use_container_width=True,
         ):
-            metadata.append(
-                f"Service: {message['service']}"
+            create_conversation()
+            st.rerun()
+
+        st.divider()
+
+        load_conversations()
+
+        # Chat list
+        for conversation in st.session_state.conversations:
+
+            conversation_id = conversation["id"]
+
+            title = (
+                conversation["title"]
+                or "New Chat"
             )
 
-        st.caption(
-            " | ".join(metadata)
-        )
+            is_active = (
+                conversation_id
+                == st.session_state.conversation_id
+            )
 
+            col1, col2 = st.columns(
+                [5, 1],
+                gap="small",
+            )
+
+            # Chat button
+            with col1:
+
+                label = (
+                    f"▶ {title}"
+                    if is_active
+                    else title
+                )
+
+                if st.button(
+                    label,
+                    key=f"chat_{conversation_id}",
+                    use_container_width=True,
+                ):
+
+                    load_conversation(
+                        conversation_id
+                    )
+
+                    st.rerun()
+
+            # Delete button
+            with col2:
+
+                if st.button(
+                    "🗑",
+                    key=f"delete_{conversation_id}",
+                    help="Delete chat",
+                    use_container_width=True,
+                ):
+
+                    delete_conversation(
+                        conversation_id
+                    )
+
+    else:
+
+        st.warning("🔴 AWS Not Connected")
+
+
+# -------------------------------------------------------------------
+# Main Chat
+# -------------------------------------------------------------------
+
+if not st.session_state.aws_connected:
+
+    st.title("☁️ AWS AI Agent")
+
+    st.info(
+        "Connect your AWS account from the sidebar "
+        "to start chatting."
+    )
+
+    st.stop()
+
+
+if not st.session_state.conversation_id:
+
+    create_conversation()
+
+
+# Display messages
+
+for message in st.session_state.messages:
+
+    render_message(message)
+
+
+# Chat input
 
 prompt = st.chat_input(
     "Ask about AWS..."
@@ -237,87 +493,128 @@ prompt = st.chat_input(
 
 
 if prompt:
-    if not st.session_state.aws_connected:
-        st.warning(
-            "Please connect your AWS account first."
-        )
-        st.stop()
+
+    if not st.session_state.conversation_id:
+        create_conversation()
+
+
+    # User message
 
     with st.chat_message("user"):
+
         st.write(prompt)
 
+
+    # Assistant response
+
     with st.chat_message("assistant"):
-        with st.spinner(
-            "Agent is thinking..."
-        ):
+
+        with st.spinner("Agent is thinking..."):
+
             try:
-                response = requests.post(
-                    f"{BACKEND_URL}/chat",
-                    json={
-                        "session_id": (
-                            st.session_state.session_id
-                        ),
-                        "message": prompt,
+
+                response = api_post(
+                    "/chat",
+                    {
+                        "session_id":
+                            st.session_state.aws_session_id,
+
+                        "conversation_id":
+                            st.session_state.conversation_id,
+
+                        "message":
+                            prompt,
                     },
                     timeout=120,
                 )
 
+
                 if response.status_code != 200:
+
                     try:
+
                         detail = response.json().get(
                             "detail",
                             "Agent failed.",
                         )
+
                     except Exception:
+
                         detail = response.text
 
                     st.error(detail)
                     st.stop()
 
+
                 data = response.json()
+
+
+                # Assistant answer
 
                 st.write(
                     data["answer"]
                 )
 
+
+                # Metadata
+
                 caption = (
                     f"Intent: {data['intent']}"
                 )
+
 
                 if (
                     data["intent"] == "MONITORING"
                     and data.get("service")
                 ):
+
                     caption += (
                         f" | Service: "
                         f"{data['service']}"
                     )
 
+
                 st.caption(caption)
 
-                st.session_state.messages.append(
-                    {
-                        "user": prompt,
-                        "assistant": data["answer"],
-                        "intent": data["intent"],
-                        "service": data.get(
-                            "service"
-                        ),
-                    }
+
+                # Update local state
+
+                st.session_state.messages.extend(
+                    [
+                        {
+                            "role": "user",
+                            "content": prompt,
+                        },
+                        {
+                            "role": "assistant",
+                            "content": data["answer"],
+                            "intent": data["intent"],
+                            "service": data.get("service"),
+                        },
+                    ]
                 )
 
+
+                load_conversations()
+
+
             except requests.exceptions.ConnectionError:
+
                 st.error(
                     "Cannot connect to the FastAPI backend. "
                     "Make sure Uvicorn is running on port 8000."
                 )
 
+
             except requests.exceptions.Timeout:
+
                 st.error(
                     "The chat request timed out."
                 )
 
+
             except Exception as exc:
+
                 st.error(
                     f"Error: {exc}"
                 )

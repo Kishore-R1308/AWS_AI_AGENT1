@@ -1,6 +1,6 @@
 import boto3
 
-from config import AWS_SESSION_DURATION
+from backend.config import AWS_SESSION_DURATION
 
 # Demo-only in-memory session store.
 # Use a secure session/credential store in production.

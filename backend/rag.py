@@ -19,7 +19,7 @@ from qdrant_client.models import (
 
 from langchain_qdrant import QdrantVectorStore
 
-from config import (
+from backend.config import (
     QDRANT_URL,
     QDRANT_API_KEY,
 )
