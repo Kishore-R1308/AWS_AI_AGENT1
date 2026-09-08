@@ -1325,15 +1325,22 @@ Return ONLY valid JSON:
 
 RULES:
 
-- confirmed_facts must contain only directly supported facts.
-- likely_causes must remain explicitly possible/likely.
-- assumptions must be labeled as assumptions.
-- Do not claim an unproven cause as confirmed.
-- If evidence is insufficient, say:
+- confirmed_facts must contain ONLY facts directly supported by the live AWS evidence or explicitly stated by the user.
+- likely_causes must contain ONLY plausible causes supported by the available evidence.
+- Do NOT invent causes, user expectations, intentions, requirements, or assumptions.
+- The assumptions list MUST be empty unless an assumption is genuinely necessary to interpret the request.
+- Never infer what the user expects unless the user explicitly stated it.
+- Do NOT treat an AWS resource state as evidence of user intent.
+- Do NOT repeat the same fact as multiple causes.
+- A condition such as "stopped", "no public IP", or "high CPU" is a fact, not automatically a root cause.
+- Clearly distinguish confirmed facts from inferred or possible causes.
+- Only state a root cause when the available evidence supports it.
+- If the evidence is insufficient, set root_cause to:
   "Root cause cannot be determined from the available evidence."
 - Do not invent resource IDs.
 - Do not invent CloudTrail events.
 - Do not invent CPU values.
+- Do not invent metrics, timestamps, resources, or API results.
 """
 
     response = llm.invoke(
