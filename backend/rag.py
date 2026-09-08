@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import uuid
 from typing import Iterable
 
 from langchain_core.documents import Document
@@ -11,10 +12,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
-    VectorParams,
-    Filter,
     FieldCondition,
+    Filter,
     MatchValue,
+    VectorParams,
 )
 
 from langchain_qdrant import QdrantVectorStore
@@ -22,24 +23,23 @@ from langchain_qdrant import QdrantVectorStore
 from backend.config import (
     QDRANT_URL,
     QDRANT_API_KEY,
+    QDRANT_COLLECTION_NAME,
+    EMBEDDING_MODEL_NAME,
 )
 
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
-COLLECTION_NAME = "aws_documents"
 
-# all-MiniLM-L6-v2 embedding dimension
+COLLECTION_NAME = QDRANT_COLLECTION_NAME
+
 VECTOR_SIZE = 384
 
-# Chunk configuration
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 180
 
-# Retrieval configuration
 DEFAULT_RETRIEVAL_K = 8
-FETCH_K = 30
 
 
 # ============================================================
@@ -58,24 +58,28 @@ _splitter = None
 
 def get_embeddings():
     """
-    Load the embedding model only once.
+    Load the HuggingFace embedding model once and reuse it.
     """
 
     global _embeddings
 
     if _embeddings is None:
 
+        if not EMBEDDING_MODEL_NAME:
+            raise ValueError(
+                "EMBEDDING_MODEL_NAME environment variable "
+                "is not set."
+            )
+
         print("=" * 70)
         print("LOADING EMBEDDING MODEL")
         print("=" * 70)
 
         _embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-
+            model_name=EMBEDDING_MODEL_NAME,
             model_kwargs={
                 "device": "cpu",
             },
-
             encode_kwargs={
                 "normalize_embeddings": True,
                 "batch_size": 32,
@@ -83,7 +87,8 @@ def get_embeddings():
         )
 
         print(
-            "Embedding model loaded successfully."
+            f"Embedding model loaded: "
+            f"{EMBEDDING_MODEL_NAME}"
         )
 
     return _embeddings
@@ -95,7 +100,7 @@ def get_embeddings():
 
 def get_qdrant_client():
     """
-    Create Qdrant Cloud client only once.
+    Create and cache the Qdrant Cloud client.
     """
 
     global _qdrant_client
@@ -104,12 +109,14 @@ def get_qdrant_client():
 
         if not QDRANT_URL:
             raise ValueError(
-                "QDRANT_URL environment variable is not set."
+                "QDRANT_URL environment variable "
+                "is not set."
             )
 
         if not QDRANT_API_KEY:
             raise ValueError(
-                "QDRANT_API_KEY environment variable is not set."
+                "QDRANT_API_KEY environment variable "
+                "is not set."
             )
 
         print("=" * 70)
@@ -134,7 +141,7 @@ def get_qdrant_client():
 
 def ensure_collection():
     """
-    Create the Qdrant collection if it does not already exist.
+    Create the Qdrant collection if it does not exist.
     """
 
     client = get_qdrant_client()
@@ -179,7 +186,7 @@ def ensure_collection():
 
 def get_splitter():
     """
-    Create the text splitter only once.
+    Create and cache the recursive text splitter.
     """
 
     global _splitter
@@ -190,7 +197,6 @@ def get_splitter():
             chunk_size=CHUNK_SIZE,
             chunk_overlap=CHUNK_OVERLAP,
             length_function=len,
-
             separators=[
                 "\n\n",
                 "\n",
@@ -211,7 +217,7 @@ def get_splitter():
 
 def get_vectorstore():
     """
-    Connect to the Qdrant Cloud vector store.
+    Create and cache the LangChain Qdrant vector store.
     """
 
     global _vectorstore
@@ -243,6 +249,9 @@ def get_vectorstore():
 # ============================================================
 
 def normalize_text(text: str) -> str:
+    """
+    Clean extracted document text before chunking.
+    """
 
     if not text:
         return ""
@@ -288,6 +297,9 @@ def make_document_id(
     text: str,
     metadata: dict | None = None,
 ) -> str:
+    """
+    Generate a deterministic SHA-256 ID for each chunk.
+    """
 
     metadata = metadata or {}
 
@@ -296,31 +308,24 @@ def make_document_id(
             "content_type",
             "text",
         ),
-
         "image_index": metadata.get(
             "image_index",
         ),
-
         "table_index": metadata.get(
             "table_index",
         ),
-
         "block_index": metadata.get(
             "block_index",
         ),
-
         "image_id": metadata.get(
             "image_id",
         ),
-
         "table_id": metadata.get(
             "table_id",
         ),
-
         "image_fingerprint": metadata.get(
             "image_fingerprint",
         ),
-
         "page": page,
     }
 
@@ -338,9 +343,7 @@ def make_document_id(
         f"{text}"
     )
 
-    return hashlib.sha256(
-        raw.encode("utf-8")
-    ).hexdigest()
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
 
 # ============================================================
@@ -350,6 +353,10 @@ def make_document_id(
 def split_documents(
     documents: Iterable[Document],
 ) -> list[Document]:
+    """
+    Normalize and split documents into chunks while
+    preserving their metadata.
+    """
 
     splitter = get_splitter()
 
@@ -389,25 +396,21 @@ def split_documents(
 
             metadata = {
                 **document.metadata,
-
                 "source": source,
-
                 "page": page,
-
                 "chunk_index": chunk_index,
-
-                "chunk_size": len(
-                    chunk_text
-                ),
+                "chunk_size": len(chunk_text),
             }
 
-            metadata["chunk_id"] = make_document_id(
+            chunk_id = make_document_id(
                 source=source,
                 page=page,
                 chunk_index=chunk_index,
                 text=chunk_text,
                 metadata=metadata,
             )
+
+            metadata["chunk_id"] = chunk_id
 
             chunks.append(
                 Document(
@@ -424,12 +427,19 @@ def split_documents(
 # ============================================================
 
 def get_source_filter(source: str):
+    """
+    Build a Qdrant filter for a specific document source.
+
+    LangChain Qdrant stores Document metadata under
+    the `metadata` payload field.
+    """
+
     return Filter(
         must=[
             FieldCondition(
                 key="metadata.source",
                 match=MatchValue(
-                    value=source
+                    value=source,
                 ),
             )
         ]
@@ -437,12 +447,15 @@ def get_source_filter(source: str):
 
 
 # ============================================================
-# REMOVE DOCUMENT BY SOURCE
+# DELETE DOCUMENTS BY SOURCE
 # ============================================================
 
 def delete_documents_by_source(
     source: str,
 ) -> int:
+    """
+    Delete all chunks belonging to a source.
+    """
 
     if not source:
         return 0
@@ -451,24 +464,22 @@ def delete_documents_by_source(
 
     ensure_collection()
 
+    print()
+    print("=" * 70)
+    print("REMOVING OLD DOCUMENT CHUNKS")
+    print("=" * 70)
+
+    print(
+        f"Source: {source}"
+    )
+
     try:
-
-        print()
-        print("=" * 70)
-        print("REMOVING OLD DOCUMENT CHUNKS")
-        print("=" * 70)
-
-        print(
-            f"Source: {source}"
-        )
-
-        source_filter = get_source_filter(
-            source
-        )
 
         points, _ = client.scroll(
             collection_name=COLLECTION_NAME,
-            scroll_filter=source_filter,
+            scroll_filter=get_source_filter(
+                source
+            ),
             limit=10000,
             with_payload=False,
             with_vectors=False,
@@ -516,12 +527,15 @@ def delete_documents_by_source(
 
 
 # ============================================================
-# CHECK SOURCE EXISTS
+# SOURCE EXISTS
 # ============================================================
 
 def source_exists(
     source: str,
 ) -> bool:
+    """
+    Check whether a source already exists in Qdrant.
+    """
 
     if not source:
         return False
@@ -555,12 +569,15 @@ def source_exists(
 
 
 # ============================================================
-# GET SOURCE CHUNK COUNT
+# SOURCE CHUNK COUNT
 # ============================================================
 
 def get_source_chunk_count(
     source: str,
 ) -> int:
+    """
+    Return the number of chunks belonging to a source.
+    """
 
     if not source:
         return 0
@@ -601,6 +618,9 @@ def add_documents(
     documents: list[Document],
     batch_size: int = 16,
 ) -> int:
+    """
+    Split, deduplicate and insert documents into Qdrant.
+    """
 
     if not documents:
 
@@ -631,13 +651,14 @@ def add_documents(
         f"Total chunks generated: "
         f"{len(chunks)}"
     )
+    
+    
 
     # --------------------------------------------------------
-    # REMOVE DUPLICATE IDS
+    # DEDUPLICATE CHUNKS
     # --------------------------------------------------------
 
     unique_chunks: list[Document] = []
-
     seen_ids: set[str] = set()
 
     duplicate_count = 0
@@ -692,13 +713,12 @@ def add_documents(
     vectorstore = get_vectorstore()
 
     total = len(chunks)
+    indexed_count = 0
 
     print()
     print("=" * 70)
     print("STARTING QDRANT INDEXING")
     print("=" * 70)
-
-    indexed_count = 0
 
     for start in range(
         0,
@@ -709,29 +729,6 @@ def add_documents(
         batch = chunks[
             start:start + batch_size
         ]
-
-        unique_batch = []
-
-        batch_ids = set()
-
-        for document in batch:
-
-            chunk_id = document.metadata[
-                "chunk_id"
-            ]
-
-            if chunk_id in batch_ids:
-                continue
-
-            batch_ids.add(
-                chunk_id
-            )
-
-            unique_batch.append(
-                document
-            )
-
-        batch = unique_batch
 
         if not batch:
             continue
@@ -777,6 +774,10 @@ def replace_document(
     documents: list[Document],
     batch_size: int = 16,
 ) -> int:
+    """
+    Remove all existing chunks for a source and index
+    the new document chunks.
+    """
 
     if not source:
 
@@ -817,7 +818,6 @@ def replace_document(
         batch_size=batch_size,
     )
 
-    print()
     print(
         f"Replacement completed for: "
         f"{source}"
@@ -832,6 +832,96 @@ def replace_document(
 
 
 # ============================================================
+# PAYLOAD EXTRACTION
+# ============================================================
+
+def _extract_document_from_payload(
+    payload: dict,
+) -> Document | None:
+    """
+    Convert a Qdrant payload into a LangChain Document.
+
+    Handles the standard LangChain Qdrant payload format:
+
+        {
+            "page_content": "...",
+            "metadata": {...}
+        }
+
+    and also supports flatter/custom payload structures
+    for compatibility with existing collections.
+    """
+
+    if not payload:
+        return None
+
+    # --------------------------------------------------------
+    # STANDARD LANGCHAIN FORMAT
+    # --------------------------------------------------------
+
+    if "page_content" in payload:
+
+        text = payload.get(
+            "page_content"
+        )
+
+        metadata = payload.get(
+            "metadata",
+            {},
+        )
+
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        if text:
+
+            return Document(
+                page_content=str(text),
+                metadata=metadata,
+            )
+
+    # --------------------------------------------------------
+    # CUSTOM / LEGACY FORMAT
+    # --------------------------------------------------------
+
+    text = (
+        payload.get("text")
+        or payload.get("content")
+        or payload.get("page_content")
+    )
+
+    if not text:
+        return None
+
+    metadata = payload.get(
+        "metadata",
+        {},
+    )
+
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    # Preserve top-level fields if present
+    for key in (
+        "source",
+        "document_name",
+        "page",
+        "content_type",
+        "chunk_id",
+        "chunk_index",
+    ):
+
+        if key in payload and key not in metadata:
+
+            metadata[key] = payload[key]
+
+    return Document(
+        page_content=str(text),
+        metadata=metadata,
+    )
+
+
+# ============================================================
 # RETRIEVE DOCUMENTS
 # ============================================================
 
@@ -839,25 +929,23 @@ def retrieve_documents(
     query: str,
     k: int = DEFAULT_RETRIEVAL_K,
 ) -> list[Document]:
+    """
+    Retrieve the most relevant documents from Qdrant.
+    """
 
     if not query:
+        return []
+
+    if k <= 0:
         return []
 
     client = get_qdrant_client()
 
     ensure_collection()
 
-    # --------------------------------------------------------
-    # CREATE QUERY EMBEDDING
-    # --------------------------------------------------------
-
     query_vector = get_embeddings().embed_query(
         query
     )
-
-    # --------------------------------------------------------
-    # SEARCH QDRANT DIRECTLY
-    # --------------------------------------------------------
 
     result = client.query_points(
         collection_name=COLLECTION_NAME,
@@ -873,54 +961,31 @@ def retrieve_documents(
 
         payload = point.payload or {}
 
-        text = payload.get(
-            "text",
-            "",
+        document = (
+            _extract_document_from_payload(
+                payload
+            )
         )
 
-        if not text:
+        if document is None:
             continue
 
-        metadata = {
-            "source": payload.get(
-                "source",
-                "Unknown source",
-            ),
+        # Keep similarity score available
+        document.metadata[
+            "score"
+        ] = getattr(
+            point,
+            "score",
+            None,
+        )
 
-            "document_name": payload.get(
-                "document_name",
-                "Unknown document",
-            ),
-
-            "page": payload.get(
-                "page",
-                "Unknown page",
-            ),
-
-            "content_type": payload.get(
-                "content_type",
-                "text",
-            ),
-        }
-
-        # Preserve additional metadata
-        for key, value in payload.items():
-
-            if key not in {
-                "text",
-                "source",
-                "document_name",
-                "page",
-                "content_type",
-            }:
-
-                metadata[key] = value
+        # Preserve Qdrant point ID
+        document.metadata[
+            "qdrant_point_id"
+        ] = point.id
 
         documents.append(
-            Document(
-                page_content=text,
-                metadata=metadata,
-            )
+            document
         )
 
     return documents
@@ -934,6 +999,9 @@ def retrieve_context(
     query: str,
     k: int = DEFAULT_RETRIEVAL_K,
 ) -> str:
+    """
+    Convert retrieved Qdrant documents into context for the LLM.
+    """
 
     documents = retrieve_documents(
         query=query,
@@ -956,7 +1024,10 @@ def retrieve_context(
 
         source = document.metadata.get(
             "source",
-            "Unknown source",
+            document.metadata.get(
+                "document_name",
+                "Unknown source",
+            ),
         )
 
         page = document.metadata.get(
@@ -969,16 +1040,32 @@ def retrieve_context(
             "text",
         )
 
+        score = document.metadata.get(
+            "score"
+        )
+
+        score_text = (
+            f"{score:.4f}"
+            if isinstance(
+                score,
+                (int, float),
+            )
+            else "N/A"
+        )
+
         parts.append(
             f"SOURCE {index}\n"
             f"Document: {source}\n"
             f"Page: {page}\n"
             f"Content Type: {content_type}\n"
+            f"Relevance Score: {score_text}\n"
             f"Content:\n"
             f"{document.page_content}"
         )
 
     return "\n\n---\n\n".join(parts)
+
+
 # ============================================================
 # RETRIEVED SOURCES
 # ============================================================
@@ -987,6 +1074,9 @@ def get_retrieved_sources(
     query: str,
     k: int = DEFAULT_RETRIEVAL_K,
 ) -> list[dict]:
+    """
+    Return source metadata for retrieved documents.
+    """
 
     documents = retrieve_documents(
         query=query,
@@ -1015,6 +1105,14 @@ def get_retrieved_sources(
                     "content_type",
                     "text",
                 ),
+
+                "score": document.metadata.get(
+                    "score"
+                ),
+
+                "qdrant_point_id": document.metadata.get(
+                    "qdrant_point_id"
+                ),
             }
         )
 
@@ -1026,6 +1124,12 @@ def get_retrieved_sources(
 # ============================================================
 
 def reset_collection():
+    """
+    Delete the entire Qdrant collection.
+
+    The collection will be recreated automatically the next
+    time ensure_collection() or get_vectorstore() is called.
+    """
 
     global _vectorstore
 
@@ -1058,3 +1162,5 @@ def reset_collection():
         print(
             str(exc)
         )
+
+        raise

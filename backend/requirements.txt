@@ -1,30 +1,87 @@
+```text
+# ============================================================
+# BACKEND / API
+# ============================================================
+
 fastapi
 uvicorn[standard]
+
+# ============================================================
+# FRONTEND
+# ============================================================
+
 streamlit
 requests
+
+# ============================================================
+# AWS
+# ============================================================
+
 boto3
 botocore
+
+# ============================================================
+# CONFIGURATION / DATABASE
+# ============================================================
+
 python-dotenv
 sqlalchemy
+
+# PostgreSQL support
+# Keep if you want PostgreSQL compatibility.
 psycopg2-binary
+
+# ============================================================
+# PYDANTIC
+# ============================================================
+
+pydantic
+pydantic-settings
+
+# ============================================================
+# LANGCHAIN / LANGGRAPH
+# ============================================================
+
 langchain
 langchain-core
 langgraph
 langchain-groq
 langchain-huggingface
 langchain-qdrant
+langchain-text-splitters
+langchain-community
+
+# ============================================================
+# QDRANT
+# ============================================================
+
 qdrant-client
+
+# ============================================================
+# EMBEDDINGS / AI MODELS
+# ============================================================
+
 sentence-transformers
 transformers
 torch
-pydantic
-pydantic-settings
-langchain-text-splitters
-langchain-community
+
+# ============================================================
+# PDF / DOCUMENT PROCESSING
+# ============================================================
+
 pymupdf
 camelot-py
-pytesseract
+
+# ============================================================
+# IMAGE / OCR PROCESSING
+# ============================================================
+
 Pillow
 opencv-python
-ghostscript
 easyocr
+pytesseract
+
+
+# Camelot / PDF rendering dependency
+ghostscript
+```
