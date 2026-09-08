@@ -366,6 +366,7 @@ def render_rca(rca):
             st.markdown(
                 "#### 🔍 Root Cause Analysis"
             )
+
             st.write(text)
 
         return
@@ -483,6 +484,7 @@ def render_rca(rca):
         st.markdown(
             "**Analysis**"
         )
+
         st.write(
             clean_text(analysis)
         )
@@ -695,15 +697,6 @@ def render_message(message):
                     " | ".join(metadata)
                 )
 
-            render_rca(
-                message.get("rca")
-            )
-
-            render_recommendations(
-                message.get(
-                    "recommendations"
-                )
-            )
 
 
 # ============================================================
@@ -916,7 +909,6 @@ with st.sidebar:
             if create_conversation():
                 st.rerun()
 
-
         st.divider()
 
         load_conversations()
@@ -1010,10 +1002,7 @@ if not st.session_state.aws_connected:
         "☁️ AWS AI Agent"
     )
 
-    st.info(
-        "Connect your AWS account from the sidebar "
-        "to start chatting."
-    )
+
 
     st.stop()
 
@@ -1127,10 +1116,11 @@ if prompt:
 
                     data = response.json()
 
-
                     # ------------------------------------------------
                     # Main answer
                     # ------------------------------------------------
+
+                    intent = data.get("intent")
 
                     answer = clean_text(
                         data.get(
@@ -1149,10 +1139,6 @@ if prompt:
                     # ------------------------------------------------
                     # Metadata
                     # ------------------------------------------------
-
-                    intent = data.get(
-                        "intent"
-                    )
 
                     if intent:
 
@@ -1175,28 +1161,6 @@ if prompt:
                         st.caption(
                             caption
                         )
-
-
-                    # ------------------------------------------------
-                    # RCA
-                    # ------------------------------------------------
-
-                    render_rca(
-                        data.get(
-                            "rca"
-                        )
-                    )
-
-
-                    # ------------------------------------------------
-                    # Recommendations
-                    # ------------------------------------------------
-
-                    render_recommendations(
-                        data.get(
-                            "recommendations"
-                        )
-                    )
 
 
                     # ------------------------------------------------
